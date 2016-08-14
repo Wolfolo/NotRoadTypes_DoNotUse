@@ -56,7 +56,7 @@ static const SpriteID SPR_LARGE_SMALL_WINDOW = 682;
 
 /** Extra graphic spritenumbers */
 static const SpriteID SPR_OPENTTD_BASE   = 4896;
-static const uint16 OPENTTD_SPRITE_COUNT = 175;
+static const uint16 OPENTTD_SPRITE_COUNT = 176;
 
 /* Halftile-selection sprites */
 static const SpriteID SPR_HALFTILE_SELECTION_FLAT = SPR_OPENTTD_BASE;
@@ -1089,7 +1089,7 @@ static const SpriteID SPR_IMG_ZOOMIN          = 735;
 static const SpriteID SPR_IMG_ZOOMOUT         = 736;
 static const SpriteID SPR_IMG_BUILDRAIL       = 727;
 static const SpriteID SPR_IMG_BUILDROAD       = 728;
-static const SpriteID SPR_IMG_BUILDLTRAIL     = 727;
+static const SpriteID SPR_IMG_BUILDLTRAIL     = SPR_OPENTTD_BASE + 175;
 static const SpriteID SPR_IMG_BUILDWATER      = 729;
 static const SpriteID SPR_IMG_BUILDAIR        = 730;
 static const SpriteID SPR_IMG_LANDSCAPING     = 4083;

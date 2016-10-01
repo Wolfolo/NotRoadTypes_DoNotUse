@@ -7,19 +7,17 @@
  * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenTTD. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/** @file road_gui.h Functions/types related to the road GUIs. */
+/** @file ltrail_gui.h Functions/types related to the light rail GUIs. */
 
-#ifndef ROAD_GUI_H
-#define ROAD_GUI_H
+#ifndef LTRAIL_GUI_H
+#define LTRAIL_GUI_H
 
 #include "road_type.h"
 #include "tile_type.h"
 #include "direction_type.h"
 #include "widgets/dropdown_type.h"
 
-struct Window *ShowBuildRoadToolbar(RoadType roadtype);
-struct Window *ShowBuildRoadScenToolbar();
-void ConnectRoadToStructure(TileIndex tile, DiagDirection direction);
-DropDownList *GetRoadTypeDropDownList(bool for_replacement = false);
+struct Window *ShowBuildLtRailToolbar(RoadType roadtype);
+DropDownList *GetLtRailTypeDropDownList(bool for_replacement = false);
 
-#endif /* ROAD_GUI_H */
+#endif /* LTRAIL_GUI_H */

@@ -678,14 +678,16 @@ struct BuildRoadToolbarWindow : Window {
 static EventState RoadToolbarGlobalHotkeys(int hotkey)
 {
 	Window *w = NULL;
+	extern RoadType _last_built_roadtype;
 	switch (_game_mode) {
 		case GM_NORMAL: {
-			extern RoadType _last_built_roadtype;
 			w = ShowBuildRoadToolbar(_last_built_roadtype);
 			break;
 		}
 
 		case GM_EDITOR:
+			// The scenario editor does not have a light rail toolbar
+			if (_last_built_roadtype == ROADTYPE_TRAM) break;
 			w = ShowBuildRoadScenToolbar();
 			break;
 
@@ -712,7 +714,6 @@ static Hotkey roadtoolbar_hotkeys[] = {
 	HOTKEY_LIST_END
 };
 HotkeyList BuildRoadToolbarWindow::hotkeys("roadtoolbar", roadtoolbar_hotkeys, RoadToolbarGlobalHotkeys);
-
 
 static const NWidgetPart _nested_build_road_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
@@ -755,46 +756,6 @@ static WindowDesc _build_road_desc(
 	&BuildRoadToolbarWindow::hotkeys
 );
 
-static const NWidgetPart _nested_build_tramway_widgets[] = {
-	NWidget(NWID_HORIZONTAL),
-		NWidget(WWT_CLOSEBOX, COLOUR_DARK_GREEN),
-		NWidget(WWT_CAPTION, COLOUR_DARK_GREEN), SetDataTip(STR_ROAD_TOOLBAR_TRAM_CONSTRUCTION_CAPTION, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
-		NWidget(WWT_STICKYBOX, COLOUR_DARK_GREEN),
-	EndContainer(),
-	NWidget(NWID_HORIZONTAL),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_ROAD_X),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_TRAMWAY_X_DIR, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_TRAMWAY_SECTION),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_ROAD_Y),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_TRAMWAY_Y_DIR, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_TRAMWAY_SECTION),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_AUTOROAD),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_AUTOTRAM, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_AUTOTRAM),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_DEMOLISH),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_DYNAMITE, STR_TOOLTIP_DEMOLISH_BUILDINGS_ETC),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_DEPOT),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_ROAD_DEPOT, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_TRAM_VEHICLE_DEPOT),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_BUS_STATION),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_BUS_STATION, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_PASSENGER_TRAM_STATION),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_TRUCK_STATION),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_TRUCK_BAY, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_CARGO_TRAM_STATION),
-		NWidget(WWT_PANEL, COLOUR_DARK_GREEN, -1), SetMinimalSize(0, 22), SetFill(1, 1), EndContainer(),
-		NWidget(WWT_EMPTY, COLOUR_DARK_GREEN, WID_ROT_ONE_WAY), SetMinimalSize(0, 0),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_BUILD_BRIDGE),
-						SetFill(0, 1), SetMinimalSize(43, 22), SetDataTip(SPR_IMG_BRIDGE, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_TRAMWAY_BRIDGE),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_BUILD_TUNNEL),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_ROAD_TUNNEL, STR_ROAD_TOOLBAR_TOOLTIP_BUILD_TRAMWAY_TUNNEL),
-		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_ROT_REMOVE),
-						SetFill(0, 1), SetMinimalSize(22, 22), SetDataTip(SPR_IMG_REMOVE, STR_ROAD_TOOLBAR_TOOLTIP_TOGGLE_BUILD_REMOVE_FOR_TRAMWAYS),
-	EndContainer(),
-};
-
-static WindowDesc _build_tramway_desc(
-	WDP_ALIGN_TOOLBAR, "toolbar_tramway", 0, 0,
-	WC_BUILD_TOOLBAR, WC_NONE,
-	WDF_CONSTRUCTION,
-	_nested_build_tramway_widgets, lengthof(_nested_build_tramway_widgets),
-	&BuildRoadToolbarWindow::hotkeys
-);
-
 /**
  * Open the build road toolbar window
  *
@@ -808,7 +769,7 @@ Window *ShowBuildRoadToolbar(RoadType roadtype)
 	_cur_roadtype = roadtype;
 
 	DeleteWindowByClass(WC_BUILD_TOOLBAR);
-	return AllocateWindowDescFront<BuildRoadToolbarWindow>(roadtype == ROADTYPE_ROAD ? &_build_road_desc : &_build_tramway_desc, TRANSPORT_ROAD);
+	return AllocateWindowDescFront<BuildRoadToolbarWindow>(&_build_road_desc, TRANSPORT_ROAD);
 }
 
 static const NWidgetPart _nested_build_road_scen_widgets[] = {
@@ -1115,4 +1076,19 @@ void InitializeRoadGui()
 {
 	_road_depot_orientation = DIAGDIR_NW;
 	_road_station_picker_orientation = DIAGDIR_NW;
+}
+
+/**
+* Create a drop down list for all the road types of the local company.
+* @param for_replacement Whether this list is for the replacement window.
+* @return The populated and sorted #DropDownList.
+*/
+DropDownList *GetRoadTypeDropDownList(bool for_replacement)
+{
+	DropDownList *list = new DropDownList();
+
+	/* Road is always visible and available. */
+	*list->Append() = new DropDownListStringItem(STR_ROAD_MENU_ROAD_CONSTRUCTION, ROADTYPE_ROAD, false);
+
+	return list;
 }

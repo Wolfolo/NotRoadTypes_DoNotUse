@@ -30,6 +30,7 @@
 #include "road_gui.h"
 #include "ltrail_gui.h"
 #include "zoom_func.h"
+#include "engine_base.h"
 
 #include "widgets/road_widget.h"
 
@@ -635,7 +636,7 @@ static Hotkey ltrailtoolbar_hotkeys[] = {
 	Hotkey('4', "demolish", WID_LRT_DEMOLISH),
 	Hotkey('5', "depot", WID_LRT_DEPOT),
 	Hotkey('6', "pax_station", WID_LRT_PAX_STATION),
-	Hotkey('7', "goods_station", WID_LRT_FREIGHT_STATION),
+	Hotkey('7', "freight_station", WID_LRT_FREIGHT_STATION),
 	Hotkey('B', "bridge", WID_LRT_BUILD_BRIDGE),
 	Hotkey('T', "tunnel", WID_LRT_BUILD_TUNNEL),
 	Hotkey('R', "remove", WID_LRT_REMOVE),
@@ -710,7 +711,7 @@ struct BuildLtRailStationWindow : public PickerWindowBase {
 		if (!IsInsideMM(widget, WID_BLRS_STATION_X, WID_BLRS_STATION_Y + 1)) return;
 
 		StationType st = (this->window_class == WC_BUS_STATION) ? STATION_BUS : STATION_TRUCK;
-		StationPickerDrawSprite(r.left + 1 + ScaleGUITrad(31), r.bottom - ScaleGUITrad(31), st, INVALID_RAILTYPE, _cur_ltrailtype, widget);
+		StationPickerDrawSprite(r.left + 1 + ScaleGUITrad(31), r.bottom - ScaleGUITrad(31), st, INVALID_RAILTYPE, ROADTYPE_TRAM, widget + 2); // + 2 because I removed the 2 widgets of the road stops
 	}
 
 	virtual void OnClick(Point pt, int widget, int click_count)
@@ -877,4 +878,27 @@ static WindowDesc _build_road_depot_desc(
 static void ShowRoadDepotPicker(Window *parent)
 {
 	new BuildRoadDepotWindow(&_build_road_depot_desc, parent);
+}
+
+/**
+* Create a drop down list for all the light rail types of the local company.
+* @param for_replacement Whether this list is for the replacement window.
+* @return The populated and sorted #DropDownList.
+*/
+DropDownList *GetLtRailTypeDropDownList(bool for_replacement)
+{
+	const Company *c = Company::Get(_local_company);
+	DropDownList *list = new DropDownList();
+
+	/* Tram is only visible when there will be a tram, and available when that has been introduced. */
+	Engine *e;
+	FOR_ALL_ENGINES_OF_TYPE(e, VEH_ROAD) {
+		if (!HasBit(e->info.climates, _settings_game.game_creation.landscape)) continue;
+		if (!HasBit(e->info.misc_flags, EF_ROAD_TRAM)) continue;
+
+		*list->Append() = new DropDownListStringItem(STR_ROAD_MENU_TRAM_CONSTRUCTION, ROADTYPE_TRAM, !HasBit(c->avail_roadtypes, ROADTYPE_TRAM));
+		break;
+	}
+
+	return list;
 }

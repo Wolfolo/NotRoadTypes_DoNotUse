@@ -49,7 +49,6 @@
 #include "../newgrf.h"
 #include "../engine_func.h"
 #include "../rail_gui.h"
-#include "../road_gui.h"
 #include "../core/backup_type.hpp"
 #include "../smallmap_gui.h"
 #include "../news_func.h"
@@ -155,7 +154,7 @@ static void ConvertTownOwner()
 				if (GB(_m[tile].m5, 4, 2) == ROAD_TILE_CROSSING && HasBit(_m[tile].m3, 7)) {
 					_m[tile].m3 = OWNER_TOWN;
 				}
-				/* FALL THROUGH */
+				FALLTHROUGH;
 
 			case MP_TUNNELBRIDGE:
 				if (_m[tile].m1 & 0x80) SetTileOwner(tile, OWNER_TOWN);
@@ -462,8 +461,18 @@ static void FixOwnerOfRailTrack(TileIndex t)
 
 	if (IsLevelCrossingTile(t)) {
 		/* else change the crossing to normal road (road vehicles won't care) */
-		MakeRoadNormal(t, GetCrossingRoadBits(t), GetRoadTypes(t), GetTownIndex(t),
-			GetRoadOwner(t, ROADTYPE_ROAD), GetRoadOwner(t, ROADTYPE_TRAM));
+		Owner road = GetRoadOwner(t, ROADTYPE_ROAD);
+		Owner tram = GetRoadOwner(t, ROADTYPE_TRAM);
+		RoadBits bits = GetCrossingRoadBits(t);
+		RoadTypes rts = (RoadTypes)GB(_me[t].m7, 6, 2);
+
+		/* MakeRoadNormal */
+		SetTileType(t, MP_ROAD);
+		SetTileOwner(t, road);
+		_m[t].m3 = (HasBit(rts, ROADTYPE_ROAD) ? bits : 0);
+		_m[t].m5 = (HasBit(rts, ROADTYPE_TRAM) ? bits : 0) | ROAD_TILE_NORMAL << 6;
+		SB(_me[t].m6, 2, 4, 0);
+		SetRoadOwner(t, ROADTYPE_TRAM, tram);
 		return;
 	}
 
@@ -719,12 +728,14 @@ bool AfterLoadGame()
 	if (IsSavegameVersionBefore(95))   _settings_game.vehicle.dynamic_engines = 0;
 	if (IsSavegameVersionBefore(96))   _settings_game.economy.station_noise_level = false;
 	if (IsSavegameVersionBefore(133)) {
-		_settings_game.vehicle.roadveh_acceleration_model = 0;
 		_settings_game.vehicle.train_slope_steepness = 3;
 	}
 	if (IsSavegameVersionBefore(134))  _settings_game.economy.feeder_payment_share = 75;
 	if (IsSavegameVersionBefore(138))  _settings_game.vehicle.plane_crashes = 2;
-	if (IsSavegameVersionBefore(139))  _settings_game.vehicle.roadveh_slope_steepness = 7;
+	if (IsSavegameVersionBefore(139)) {
+		_settings_game.vehicle.roadveh_acceleration_model = 0;
+		_settings_game.vehicle.roadveh_slope_steepness = 7;
+	}
 	if (IsSavegameVersionBefore(143))  _settings_game.economy.allow_town_level_crossings = true;
 	if (IsSavegameVersionBefore(159)) {
 		_settings_game.vehicle.max_train_length = 50;
@@ -1045,18 +1056,18 @@ bool AfterLoadGame()
 							break;
 						case ROAD_TILE_DEPOT:    break;
 					}
-					SetRoadTypes(t, ROADTYPES_ROAD);
+					SB(_me[t].m7, 6, 2, ROADTYPES_ROAD);
 					break;
 
 				case MP_STATION:
-					if (IsRoadStop(t)) SetRoadTypes(t, ROADTYPES_ROAD);
+					if (IsRoadStop(t)) SB(_me[t].m7, 6, 2, ROADTYPES_ROAD);
 					break;
 
 				case MP_TUNNELBRIDGE:
 					/* Middle part of "old" bridges */
 					if (old_bridge && IsBridge(t) && HasBit(_m[t].m5, 6)) break;
 					if (((old_bridge && IsBridge(t)) ? (TransportType)GB(_m[t].m5, 1, 2) : GetTunnelBridgeTransportType(t)) == TRANSPORT_ROAD) {
-						SetRoadTypes(t, ROADTYPES_ROAD);
+						SB(_me[t].m7, 6, 2, ROADTYPES_ROAD);
 					}
 					break;
 
@@ -1072,7 +1083,7 @@ bool AfterLoadGame()
 		for (TileIndex t = 0; t < map_size; t++) {
 			switch (GetTileType(t)) {
 				case MP_ROAD:
-					if (fix_roadtypes) SetRoadTypes(t, (RoadTypes)GB(_me[t].m7, 5, 3));
+					if (fix_roadtypes) SB(_me[t].m7, 6, 2, (RoadTypes)GB(_me[t].m7, 5, 3));
 					SB(_me[t].m7, 5, 1, GB(_m[t].m3, 7, 1)); // snow/desert
 					switch (GetRoadTileType(t)) {
 						default: SlErrorCorrupt("Invalid road tile type");
@@ -1105,7 +1116,7 @@ bool AfterLoadGame()
 				case MP_STATION:
 					if (!IsRoadStop(t)) break;
 
-					if (fix_roadtypes) SetRoadTypes(t, (RoadTypes)GB(_m[t].m3, 0, 3));
+					if (fix_roadtypes) SB(_me[t].m7, 6, 2, (RoadTypes)GB(_m[t].m3, 0, 3));
 					SB(_me[t].m7, 0, 5, HasBit(_me[t].m6, 2) ? OWNER_TOWN : GetTileOwner(t));
 					SB(_m[t].m3, 4, 4, _m[t].m1);
 					_m[t].m4 = 0;
@@ -1114,7 +1125,7 @@ bool AfterLoadGame()
 				case MP_TUNNELBRIDGE:
 					if (old_bridge && IsBridge(t) && HasBit(_m[t].m5, 6)) break;
 					if (((old_bridge && IsBridge(t)) ? (TransportType)GB(_m[t].m5, 1, 2) : GetTunnelBridgeTransportType(t)) == TRANSPORT_ROAD) {
-						if (fix_roadtypes) SetRoadTypes(t, (RoadTypes)GB(_m[t].m3, 0, 3));
+						if (fix_roadtypes) SB(_me[t].m7, 6, 2, (RoadTypes)GB(_m[t].m3, 0, 3));
 
 						Owner o = GetTileOwner(t);
 						SB(_me[t].m7, 0, 5, o); // road owner
@@ -1152,13 +1163,14 @@ bool AfterLoadGame()
 						} else {
 							TownID town = IsTileOwner(t, OWNER_TOWN) ? ClosestTownFromTile(t, UINT_MAX)->index : 0;
 
-							MakeRoadNormal(
-								t,
-								axis == AXIS_X ? ROAD_Y : ROAD_X,
-								ROADTYPES_ROAD,
-								town,
-								GetTileOwner(t), OWNER_NONE
-							);
+							/* MakeRoadNormal */
+							SetTileType(t, MP_ROAD);
+							_m[t].m2 = town;
+							_m[t].m3 = 0;
+							_m[t].m5 = (axis == AXIS_X ? ROAD_Y : ROAD_X) | ROAD_TILE_NORMAL << 6;
+							SB(_me[t].m6, 2, 4, 0);
+							_me[t].m7 = ROADTYPES_ROAD << 6;
+							SetRoadOwner(t, ROADTYPE_TRAM, OWNER_NONE);
 						}
 					} else {
 						if (GB(_m[t].m5, 3, 2) == 0) {
@@ -1209,6 +1221,36 @@ bool AfterLoadGame()
 				Train::From(v)->track = TRACK_BIT_WORMHOLE;
 			} else {
 				RoadVehicle::From(v)->state = RVSB_WORMHOLE;
+			}
+		}
+	}
+
+	extern const uint16 NRT_SAVEGAME_VERSION;
+	if (IsSavegameVersionBefore(NRT_SAVEGAME_VERSION)) {
+		/* Add road subtypes */
+		for (TileIndex t = 0; t < map_size; t++) {
+			bool has_road = false;
+			switch (GetTileType(t)) {
+				case MP_ROAD:
+					has_road = true;
+					break;
+				case MP_STATION:
+					has_road = IsRoadStop(t);
+					break;
+				case MP_TUNNELBRIDGE:
+					has_road = GetTunnelBridgeTransportType(t) == TRANSPORT_ROAD;
+					break;
+				default:
+					break;
+			}
+
+			if (has_road) {
+				RoadTypeIdentifiers rtids;
+				if (HasBit(_me[t].m7, 6)) rtids.road_identifier = RoadTypeIdentifier(ROADTYPE_ROAD, ROADSUBTYPE_NORMAL);
+				if (HasBit(_me[t].m7, 7)) rtids.tram_identifier = RoadTypeIdentifier(ROADTYPE_TRAM, ROADSUBTYPE_ELECTRIC);
+				assert(rtids.PresentRoadTypes() != ROADTYPES_NONE);
+				SetRoadTypes(t, rtids);
+				SB(_me[t].m7, 6, 2, 0);
 			}
 		}
 	}
@@ -1336,7 +1378,8 @@ bool AfterLoadGame()
 	Company *c;
 	FOR_ALL_COMPANIES(c) {
 		c->avail_railtypes = GetCompanyRailtypes(c->index);
-		c->avail_roadtypes = GetCompanyRoadtypes(c->index);
+		c->avail_roadtypes[ROADTYPE_ROAD] = GetCompanyRoadtypes(c->index, ROADTYPE_ROAD);
+		c->avail_roadtypes[ROADTYPE_TRAM] = GetCompanyRoadtypes(c->index, ROADTYPE_TRAM);
 	}
 
 	if (!IsSavegameVersionBefore(27)) AfterLoadStations();
@@ -2615,7 +2658,7 @@ bool AfterLoadGame()
 
 					if (rv->state == RVSB_IN_DEPOT || rv->state == RVSB_WORMHOLE) break;
 
-					TrackStatus ts = GetTileTrackStatus(rv->tile, TRANSPORT_ROAD, rv->compatible_roadtypes);
+					TrackStatus ts = GetTileTrackStatus(rv->tile, TRANSPORT_ROAD, rv->rtid.basetype);
 					TrackBits trackbits = TrackStatusToTrackBits(ts);
 
 					/* Only X/Y tracks can be sloped. */
@@ -2989,10 +3032,6 @@ bool AfterLoadGame()
 	ResetSignalHandlers();
 
 	AfterLoadLinkGraphs();
-
-	if (IsSavegameVersionBefore(196)) {
-		InitializeRoadGUI();
-	}
 	return true;
 }
 

@@ -59,7 +59,7 @@ static const NIVariable _niv_vehicles[] = {
 	NIV(0x47, "vehicle cargo info"),
 	NIV(0x48, "vehicle type info"),
 	NIV(0x49, "year of construction"),
-	NIV(0x4A, "current rail type info"),
+	NIV(0x4A, "current rail/road type info"),
 	NIV(0x4B, "long date of last service"),
 	NIV(0x4C, "current max speed"),
 	NIV(0x4D, "position in articulated vehicle"),
@@ -550,7 +550,7 @@ class NIHRoadType : public NIHelper {
 	/* virtual */ uint Resolve(uint index, uint var, uint param, bool *avail) const
 	{
 		/* There is no unique GRFFile for the tile. Multiple GRFs can define different parts of the railtype.
-		* However, currently the NewGRF Debug GUI does not display variables depending on the GRF (like 0x7F) anyway. */
+		 * However, currently the NewGRF Debug GUI does not display variables depending on the GRF (like 0x7F) anyway. */
 		RoadTypeResolverObject ro(NULL, index, TCX_NORMAL, ROTSG_END);
 		return ro.GetScope(VSG_SCOPE_SELF)->GetVariable(var, param, avail);
 	}

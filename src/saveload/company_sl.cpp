@@ -16,6 +16,7 @@
 #include "../tunnelbridge_map.h"
 #include "../tunnelbridge.h"
 #include "../station_base.h"
+#include "../strings_func.h"
 
 #include "saveload.h"
 
@@ -130,11 +131,12 @@ void AfterLoadCompanyStats()
 				}
 
 				/* Iterate all present road types as each can have a different owner. */
-				RoadType rt;
-				FOR_EACH_SET_ROADTYPE(rt, GetRoadTypes(tile)) {
-					c = Company::GetIfValid(IsRoadDepot(tile) ? GetTileOwner(tile) : GetRoadOwner(tile, rt));
+				RoadTypeIdentifiers rtids = RoadTypeIdentifiers::FromTile(tile);
+				RoadTypeIdentifier rtid;
+				FOR_EACH_SET_ROADTYPEIDENTIFIER(rtid, rtids) {
+					c = Company::GetIfValid(IsRoadDepot(tile) ? GetTileOwner(tile) : GetRoadOwner(tile, rtid.basetype));
 					/* A level crossings and depots have two road bits. */
-					if (c != NULL) c->infrastructure.road[rt] += IsNormalRoad(tile) ? CountBits(GetRoadBits(tile, rt)) : 2;
+					if (c != NULL) c->infrastructure.road[rtid.basetype][rtid.subtype] += IsNormalRoad(tile) ? CountBits(GetRoadBits(tile, rtid.basetype)) : 2;
 				}
 				break;
 			}
@@ -152,10 +154,11 @@ void AfterLoadCompanyStats()
 					case STATION_BUS:
 					case STATION_TRUCK: {
 						/* Iterate all present road types as each can have a different owner. */
-						RoadType rt;
-						FOR_EACH_SET_ROADTYPE(rt, GetRoadTypes(tile)) {
-							c = Company::GetIfValid(GetRoadOwner(tile, rt));
-							if (c != NULL) c->infrastructure.road[rt] += 2; // A road stop has two road bits.
+						RoadTypeIdentifiers rtids = RoadTypeIdentifiers::FromTile(tile);
+						RoadTypeIdentifier rtid;
+						FOR_EACH_SET_ROADTYPEIDENTIFIER(rtid, rtids) {
+							c = Company::GetIfValid(GetRoadOwner(tile, rtid.basetype));
+							if (c != NULL) c->infrastructure.road[rtid.basetype][rtid.subtype] += 2; // A road stop has two road bits.
 						}
 						break;
 					}
@@ -184,7 +187,7 @@ void AfterLoadCompanyStats()
 						}
 					}
 				}
-				/* FALL THROUGH */
+				FALLTHROUGH;
 
 			case MP_OBJECT:
 				if (GetWaterClass(tile) == WATER_CLASS_CANAL) {
@@ -209,10 +212,11 @@ void AfterLoadCompanyStats()
 
 						case TRANSPORT_ROAD: {
 							/* Iterate all present road types as each can have a different owner. */
-							RoadType rt;
-							FOR_EACH_SET_ROADTYPE(rt, GetRoadTypes(tile)) {
-								c = Company::GetIfValid(GetRoadOwner(tile, rt));
-								if (c != NULL) c->infrastructure.road[rt] += len * 2; // A full diagonal road has two road bits.
+							RoadTypeIdentifiers rtids = RoadTypeIdentifiers::FromTile(tile);
+							RoadTypeIdentifier rtid;
+							FOR_EACH_SET_ROADTYPEIDENTIFIER(rtid, rtids) {
+								c = Company::GetIfValid(GetRoadOwner(tile, rtid.basetype));
+								if (c != NULL) c->infrastructure.road[rtid.basetype][rtid.subtype] += len * 2; // A full diagonal road has two road bits.
 							}
 							break;
 						}
@@ -243,7 +247,7 @@ static const SaveLoad _company_desc[] = {
 	    SLE_VAR(CompanyProperties, name_1,          SLE_STRINGID),
 	SLE_CONDSTR(CompanyProperties, name,            SLE_STR | SLF_ALLOW_CONTROL, 0, 84, SL_MAX_VERSION),
 
-	    SLE_VAR(CompanyProperties, president_name_1, SLE_UINT16),
+	    SLE_VAR(CompanyProperties, president_name_1, SLE_STRINGID),
 	    SLE_VAR(CompanyProperties, president_name_2, SLE_UINT32),
 	SLE_CONDSTR(CompanyProperties, president_name,  SLE_STR | SLF_ALLOW_CONTROL, 0, 84, SL_MAX_VERSION),
 
@@ -501,11 +505,11 @@ static void Check_PLYR()
 
 		/* We do not load old custom names */
 		if (IsSavegameVersionBefore(84)) {
-			if (GB(cprops->name_1, 11, 5) == 15) {
+			if (GetStringTab(cprops->name_1) == TEXT_TAB_OLD_CUSTOM) {
 				cprops->name_1 = STR_GAME_SAVELOAD_NOT_AVAILABLE;
 			}
 
-			if (GB(cprops->president_name_1, 11, 5) == 15) {
+			if (GetStringTab(cprops->president_name_1) == TEXT_TAB_OLD_CUSTOM) {
 				cprops->president_name_1 = STR_GAME_SAVELOAD_NOT_AVAILABLE;
 			}
 		}

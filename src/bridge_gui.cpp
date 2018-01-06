@@ -37,8 +37,6 @@ static BridgeType _last_railbridge_type = 0;
 /** The type of the last built road bridge */
 static BridgeType _last_roadbridge_type = 0;
 
-bool _bridge_catenary_flag = true;
-
 /**
  * Carriage for the data we need if we want to build a bridge
  */
@@ -120,7 +118,7 @@ private:
 			case TRANSPORT_ROAD: _last_roadbridge_type = this->bridges->Get(i)->index; break;
 			default: break;
 		}
-		DoCommandP(this->end_tile, this->start_tile, this->type | this->bridges->Get(i)->index | (_bridge_catenary_flag << 17),
+		DoCommandP(this->end_tile, this->start_tile, this->type | this->bridges->Get(i)->index,
 					CMD_BUILD_BRIDGE | CMD_MSG(STR_ERROR_CAN_T_BUILD_BRIDGE_HERE), CcBuildBridge);
 	}
 
@@ -361,11 +359,9 @@ static WindowDesc _build_bridge_desc(
  * @param transport_type The transport type
  * @param road_rail_type The road/rail type
  */
-void ShowBuildBridgeWindow(TileIndex start, TileIndex end, TransportType transport_type, byte road_rail_type, bool catenary_flag = false)
+void ShowBuildBridgeWindow(TileIndex start, TileIndex end, TransportType transport_type, byte road_rail_type)
 {
 	DeleteWindowByClass(WC_BUILD_BRIDGE);
-
-	_bridge_catenary_flag = catenary_flag;
 
 	/* Data type for the bridge.
 	 * Bit 16,15 = transport type,
@@ -408,15 +404,17 @@ void ShowBuildBridgeWindow(TileIndex start, TileIndex end, TransportType transpo
 
 		Money infra_cost = 0;
 		switch (transport_type) {
-			case TRANSPORT_ROAD:
-				infra_cost = (bridge_len + 2) * RoadBuildCost(RoadTypeIdentifier::Unpack(road_rail_type));
+			case TRANSPORT_ROAD: {
 				/* In case we add a new road type as well, we must be aware of those costs. */
-				// if (IsBridgeTile(start)) infra_cost *= CountBits(GetRoadTypes(start) | (RoadTypes)road_rail_type);
-				if (IsBridgeTile(start)) {
-					RoadTypeIdentifiers tile_rtids = CombineTileRoadTypeIds(start, RoadTypeIdentifier::Unpack(road_rail_type));
-					infra_cost *= CountBits(tile_rtids.PresentRoadTypes());
+				RoadTypeIdentifiers rtids;
+				if (IsBridgeTile(start)) rtids = RoadTypeIdentifiers::FromTile(start);
+				rtids.MergeRoadType(RoadTypeIdentifier::Unpack(road_rail_type));
+				RoadTypeIdentifier rtid;
+				FOR_EACH_SET_ROADTYPEIDENTIFIER(rtid, rtids) {
+					infra_cost += (bridge_len + 2) * 2 * RoadBuildCost(rtid);
 				}
 				break;
+			}
 			case TRANSPORT_RAIL: infra_cost = (bridge_len + 2) * RailBuildCost((RailType)road_rail_type); break;
 			default: break;
 		}

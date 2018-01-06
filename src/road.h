@@ -24,10 +24,12 @@
 
 /** Roadtype flags. Starts with RO instead of R because R is used for rails */
 enum RoadTypeFlags {
-	ROTF_CATENARY = 0,                   ///< Bit number for adding catenary
+	ROTF_CATENARY = 0,                                     ///< Bit number for adding catenary
+	ROTF_NO_LEVEL_CROSSING,                                ///< Bit number for disabling level crossing
 
-	ROTFB_NONE = 0,                      ///< All flags cleared.
-	ROTFB_CATENARY = 1 << ROTF_CATENARY, ///< Value for drawing a catenary.
+	ROTFB_NONE = 0,                                        ///< All flags cleared.
+	ROTFB_CATENARY = 1 << ROTF_CATENARY,                   ///< Value for drawing a catenary.
+	ROTFB_NO_LEVEL_CROSSING = 1 << ROTF_NO_LEVEL_CROSSING, ///< Value for disabling a level crossing.
 };
 DECLARE_ENUM_AS_BIT_SET(RoadTypeFlags)
 
@@ -35,34 +37,27 @@ struct SpriteGroup;
 
 /** Sprite groups for a roadtype. */
 enum RoadTypeSpriteGroup {
-	ROTSG_CURSORS,     ///< Cursor and toolbar icon images
-	ROTSG_OVERLAY,     ///< Images for overlaying track
-	ROTSG_GROUND,      ///< Main group of ground images
-	ROTSG_TUNNEL,      ///< Main group of ground images for snow or desert
-	ROTSG_WIRES,       ///< Catenary wires
-	ROTSG_PYLONS,      ///< Catenary pylons
-	ROTSG_BRIDGE,      ///< Bridge surface images
-	ROTSG_CROSSING,    ///< Level crossing overlay images
-	ROTSG_DEPOT,       ///< Depot images
-	ROTSG_FENCES,      ///< Fence images
-	ROTSG_TUNNEL_PORTAL, ///< Tunnel portal overlay
+	ROTSG_CURSORS,        ///< Optional: Cursor and toolbar icon images
+	ROTSG_OVERLAY,        ///< Optional: Images for overlaying track
+	ROTSG_GROUND,         ///< Required: Main group of ground images
+	ROTSG_reserved1,      ///<           Placeholder, if we need specific tunnel sprites.
+	ROTSG_CATENARY_FRONT, ///< Optional: Catenary front
+	ROTSG_CATENARY_BACK,  ///< Optional: Catenary back
+	ROTSG_BRIDGE,         ///< Required: Bridge surface images
+	ROTSG_reserved2,      ///<           Placeholder, if we need specific level crossing sprites.
+	ROTSG_DEPOT,          ///< Optional: Depot images
+	ROTSG_reserved3,      ///<           Placeholder, if we add road fences (for highways).
+	ROTSG_ROADSTOP,       ///< Required: Drive-in stop surface
 	ROTSG_END,
 };
 
 /** List of road type labels. */
 typedef SmallVector<RoadTypeLabel, 4> RoadTypeLabelList;
 
-struct RoadtypeInfo {
-	struct {
-		SpriteID roadbits[16];        ///< all the different roadbits combinations
-		SpriteID slopes_offset;       ///< offset for the different sprites for slopes
-		SpriteID road_oneway_base;    ///< base sprite for oneway road
-		SpriteID road_excavation_x;   ///< road excavation in X direction
-		SpriteID road_excavation_y;   ///< road excavation in Y direction
-	} base_sprites;
-
+class RoadtypeInfo {
+public:
 	/**
-	 * struct containing the sprites for the rail GUI. @note only sprites referred to
+	 * struct containing the sprites for the road GUI. @note only sprites referred to
 	 * directly in the code are listed
 	 */
 	struct {
@@ -70,9 +65,8 @@ struct RoadtypeInfo {
 		SpriteID build_y_road;        ///< button for building single rail in Y direction
 		SpriteID auto_road;           ///< button for the autoroad construction
 		SpriteID build_depot;         ///< button for building depots
-		SpriteID build_bus_station;   ///< button for building bus stations
-		SpriteID build_truck_station; ///< button for building truck stations
 		SpriteID build_tunnel;        ///< button for building a tunnel
+		SpriteID convert_road;        ///< button for converting road types
 	} gui_sprites;
 
 	struct {
@@ -80,9 +74,8 @@ struct RoadtypeInfo {
 		CursorID road_nwse;     ///< Cursor for building rail in Y direction
 		CursorID autoroad;      ///< Cursor for autorail tool
 		CursorID depot;         ///< Cursor for building a depot
-		CursorID bus_station;   ///< Cursor for building a bus station
-		CursorID truck_station; ///< Cursor for building a truck station
 		CursorID tunnel;        ///< Cursor for building a tunnel
+		SpriteID convert_road;  ///< Cursor for converting road types
 	} cursor;                       ///< Cursors associated with the road type.
 
 	struct {
@@ -91,38 +84,21 @@ struct RoadtypeInfo {
 		StringID menu_text;       ///< Name of this rail type in the main toolbar dropdown.
 		StringID build_caption;   ///< Caption of the build vehicle GUI for this rail type.
 		StringID replace_text;    ///< Text used in the autoreplace GUI.
-		StringID new_loco;        ///< Name of an engine for this type of rail in the engine preview GUI.
+		StringID new_engine;      ///< Name of an engine for this type of road in the engine preview GUI.
 
 		StringID err_build_road;        ///< Building a normal piece of road
 		StringID err_remove_road;       ///< Removing a normal piece of road
 		StringID err_depot;             ///< Building a depot
 		StringID err_build_station[2];  ///< Building a bus or truck station
 		StringID err_remove_station[2]; ///< Removing of a bus or truck station
+		StringID err_convert_road;      ///< Converting a road type
 
 		StringID picker_title[2];       ///< Title for the station picker for bus or truck stations
 		StringID picker_tooltip[2];     ///< Tooltip for the station picker for bus or truck stations
 	} strings;                        ///< Strings associated with the rail type.
 
 	/** bitmask to the OTHER roadtypes on which a vehicle of THIS roadtype generates power */
-	RoadTypes powered_roadtypes;
-
-	/** bitmask to the OTHER roadtypes on which a vehicle of THIS roadtype can physically travel */
-	RoadTypes compatible_roadtypes;
-
-	/**
-	 * Bridge offset
-	 */
-	SpriteID bridge_offset;
-
-	/**
-	 * Original roadtype number to use when drawing non-newgrf roadtypes, or when drawing stations.
-	 */
-	byte fallback_roadtype;
-
-	/**
-	 * Multiplier for curve maximum speed advantage
-	 */
-	byte curve_speed;
+	RoadSubTypes powered_roadtypes;
 
 	/**
 	 * Bit mask of road type flags
@@ -138,11 +114,6 @@ struct RoadtypeInfo {
 	 * Cost multiplier for maintenance of this road type
 	 */
 	uint16 maintenance_multiplier;
-
-	/**
-	 * Acceleration type of this road type
-	 */
-	uint8 acceleration_type;
 
 	/**
 	 * Maximum speed for vehicles travelling on this road type
@@ -177,12 +148,12 @@ struct RoadtypeInfo {
 	 * Bitmask of roadtypes that are required for this roadtype to be introduced
 	 * at a given #introduction_date.
 	 */
-	RoadTypes introduction_required_roadtypes;
+	RoadSubTypes introduction_required_roadtypes;
 
 	/**
 	 * Bitmask of which other roadtypes are introduced when this roadtype is introduced.
 	 */
-	RoadTypes introduces_roadtypes;
+	RoadSubTypes introduces_roadtypes;
 
 	/**
 	 * The sorting order of this roadtype for the toolbar dropdown.
@@ -205,31 +176,6 @@ struct RoadtypeInfo {
 	}
 };
 
-struct RoadTypeIdentifier {
-	RoadType basetype;
-	RoadSubType subtype;
-
-	uint8 Pack() const;
-	bool IsValid();
-	bool IsRoad();
-	bool IsTram();
-
-	static RoadTypeIdentifier Unpack(uint8 data)
-	{
-		RoadTypeIdentifier rtid = RoadTypeIdentifier(
-			(RoadType)GB(data, 0, 1),
-			(RoadSubType)GB(data, 1, 4)
-		);
-		
-		assert((rtid.subtype < ROADSUBTYPE_END) && (rtid.basetype < ROADTYPE_END));
-
-		return rtid;
-	}
-
-	RoadTypeIdentifier(RoadType basetype, RoadSubType subtype) : basetype(basetype), subtype(subtype) {}
-	RoadTypeIdentifier() : basetype(INVALID_ROADTYPE), subtype(INVALID_ROADSUBTYPE) {}
-};
-
 /**
  * Returns a pointer to the Roadtype information for a given roadtype
  * @param roadtype the road type which the information is requested for
@@ -238,25 +184,8 @@ struct RoadTypeIdentifier {
 static inline const RoadtypeInfo *GetRoadTypeInfo(RoadTypeIdentifier rtid)
 {
 	extern RoadtypeInfo _roadtypes[ROADTYPE_END][ROADSUBTYPE_END];
-	assert(rtid.basetype < ROADTYPE_END);
-	assert(rtid.subtype < ROADSUBTYPE_END);
+	assert(rtid.IsValid());
 	return &_roadtypes[rtid.basetype][rtid.subtype];
-}
-
-/**
- * Checks if an engine of the given RoadType can drive on a tile with a given
- * RoadType. This would normally just be an equality check, but for electrified
- * roads (which also support non-electric vehicles).
- * @return Whether the engine can drive on this tile.
- * @param  vehicletype The RoadType of the engine we are considering.
- * @param  tiletype   The RoadType of the tile we are considering.
- */
-static inline bool IsCompatibleRoad(RoadTypeIdentifier rtid)
-{
-	uint8 a = GetRoadTypeInfo(rtid)->compatible_roadtypes;
-	uint8 b = rtid.basetype;
-
-	return HasBit(a, b);
 }
 
 /**
@@ -264,17 +193,13 @@ static inline bool IsCompatibleRoad(RoadTypeIdentifier rtid)
  * RoadType. This would normally just be an equality check, but for electrified
  * roads (which also support non-electric vehicles).
  * @return Whether the engine got power on this tile.
- * @param  vehicletype The RoadType of the engine we are considering.
- * @param  tiletype   The RoadType of the tile we are considering.
+ * @param  engine_rtid The RoadType of the engine we are considering.
+ * @param  tile_rtid   The RoadType of the tile we are considering.
  */
-static inline bool HasPowerOnRoad(RoadTypeIdentifier rtid)
+static inline bool HasPowerOnRoad(RoadTypeIdentifier engine_rtid, RoadTypeIdentifier tile_rtid)
 {
-	uint8 a = GetRoadTypeInfo(rtid)->powered_roadtypes;
-	uint8 b = rtid.basetype;
-
-	return HasBit(a, b);
+	return engine_rtid.basetype == tile_rtid.basetype && HasBit(GetRoadTypeInfo(engine_rtid)->powered_roadtypes, tile_rtid.subtype);
 }
-
 
 /**
  * Returns the cost of building the specified roadtype.
@@ -288,19 +213,38 @@ static inline Money RoadBuildCost(RoadTypeIdentifier rtid)
 }
 
 /**
- * Returns the 'cost' of clearing the specified railtype.
- * @param railtype The railtype being removed.
- * @return The cost.
+ * Calculates the cost of road conversion
+ * @param from The roadtype we are converting from
+ * @param to   The roadtype we are converting to
+ * @return Cost per RoadBit
  */
-static inline Money RoadClearCost(RoadTypeIdentifier rtid)
+static inline Money RoadConvertCost(RoadTypeIdentifier from, RoadTypeIdentifier to)
 {
-	/* Clearing rail in fact earns money, but if the build cost is set
-	 * very low then a loophole exists where money can be made.
-	 * In this case we limit the removal earnings to 3/4s of the build
-	 * cost.
-	 */
+	/* Get the costs for removing and building anew
+	 * A conversion can never be more costly */
+	Money rebuildcost = RoadBuildCost(to) - _price[PR_CLEAR_ROAD];
+
+	/* Conversion between somewhat compatible roadtypes:
+	 * Pay 1/8 of the target road cost (labour costs) and additionally any difference in the
+	 * build costs, if the target type is more expensive (material upgrade costs).
+	 * Upgrade can never be more expensive than re-building. */
+	if (HasPowerOnRoad(from, to) || HasPowerOnRoad(to, from)) {
+		Money upgradecost = RoadBuildCost(to) / 8 + max((Money)0, RoadBuildCost(to) - RoadBuildCost(from));
+		return min(upgradecost, rebuildcost);
+	}
+
+	/* make the price the same as remove + build new type for road types
+	 * which are not compatible in any way */
+	return rebuildcost;
+}
+
+/**
+ * 
+ */
+static inline bool RoadNoLevelCrossing(RoadTypeIdentifier rtid)
+{
 	assert(rtid.IsValid());
-	return max(_price[PR_CLEAR_ROAD], -RoadBuildCost(rtid) * 3 / 4);
+	return HasBit(GetRoadTypeInfo(rtid)->flags, ROTF_NO_LEVEL_CROSSING);
 }
 
 RoadTypeIdentifier GetRoadTypeByLabel(RoadTypeLabel label, RoadType subtype, bool allow_alternate_labels = true);

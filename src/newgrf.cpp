@@ -308,6 +308,7 @@ struct GRFTempEngineData {
 	uint16 cargo_allowed;
 	uint16 cargo_disallowed;
 	RailTypeLabel railtypelabel;
+	uint8 roadsubtype;
 	const GRFFile *defaultcargo_grf; ///< GRF defining the cargo translation table to use if the default cargo is the 'first refittable'.
 	Refittability refittability;     ///< Did the newgrf set any refittability property? If not, default refittability will be applied.
 	bool prop27_set;         ///< Did the NewGRF set property 27 (misc flags)?
@@ -550,24 +551,29 @@ static StringID TTDPStringIDToOTTDStringIDMapping(StringID str)
  */
 StringID MapGRFStringID(uint32 grfid, StringID str)
 {
-	/* 0xD0 and 0xDC stand for all the TextIDs in the range
-	 * of 0xD000 (misc graphics texts) and 0xDC00 (misc persistent texts).
-	 * These strings are unique to each grf file, and thus require to be used with the
-	 * grfid in which they are declared */
-	switch (GB(str, 8, 8)) {
-		case 0xD0: case 0xD1: case 0xD2: case 0xD3:
-		case 0xDC:
-			return GetGRFStringID(grfid, str);
-
-		case 0xD4: case 0xD5: case 0xD6: case 0xD7:
-			/* Strings embedded via 0x81 have 0x400 added to them (no real
-			 * explanation why...) */
-			return GetGRFStringID(grfid, str - 0x400);
-
-		default: break;
+	if (IsInsideMM(str, 0xD800, 0xE000)) {
+		/* General text provided by NewGRF.
+		 * In the specs this is called the 0xDCxx range (misc presistent texts),
+		 * but we meanwhile extended the range to 0xD800-0xDFFF.
+		 * Note: We are not involved in the "persistent" business, since we do not store
+		 * any NewGRF strings in savegames. */
+		return GetGRFStringID(grfid, str);
+	} else if (IsInsideMM(str, 0xD000, 0xD800)) {
+		/* Callback text provided by NewGRF.
+		 * In the specs this is called the 0xD0xx range (misc graphics texts).
+		 * These texts can be returned by various callbacks.
+		 *
+		 * Due to how TTDP implements the GRF-local- to global-textid translation
+		 * texts included via 0x80 or 0x81 control codes have to add 0x400 to the textid.
+		 * We do not care about that difference and just mask out the 0x400 bit.
+		 */
+		str &= ~0x400;
+		return GetGRFStringID(grfid, str);
+	} else {
+		/* The NewGRF wants to include/reference an original TTD string.
+		 * Try our best to find an equivalent one. */
+		return TTDPStringIDToOTTDStringIDMapping(str);
 	}
-
-	return TTDPStringIDToOTTDStringIDMapping(str);
 }
 
 static std::map<uint32, uint32> _grf_id_overrides;
@@ -667,8 +673,15 @@ static Engine *GetNewEngine(const GRFFile *file, VehicleType type, uint16 intern
 		size_t len = (Engine::GetPoolSize() - engine_pool_size) * sizeof(*_gted);
 		memset(_gted + engine_pool_size, 0, len);
 	}
-	if (type == VEH_TRAIN) {
-		_gted[e->index].railtypelabel = GetRailTypeInfo(e->u.rail.railtype)->label;
+	switch (type) {
+		case VEH_TRAIN:
+			_gted[e->index].railtypelabel = GetRailTypeInfo(e->u.rail.railtype)->label;
+			break;
+		case VEH_ROAD:
+			_gted[e->index].roadsubtype = 0xFF;
+			break;
+		default:
+			break;
 	}
 
 	grfmsg(5, "Created new engine at index %d for GRFID %x, type %d, index %d", e->index, BSWAP32(file->grfid), type, internal_id);
@@ -1343,6 +1356,10 @@ static ChangeInfoResult RoadVehicleChangeInfo(uint engine, int numinfo, int prop
 		RoadVehicleInfo *rvi = &e->u.road;
 
 		switch (prop) {
+			case 0x05: // Road/tram subtype
+				_gted[e->index].roadsubtype = buf->ReadByte();
+				break;
+
 			case 0x08: // Speed (1 unit is 0.5 kmh)
 				rvi->max_speed = buf->ReadByte();
 				break;
@@ -2585,6 +2602,12 @@ static ChangeInfoResult GlobalVarChangeInfo(uint gvid, int numinfo, int prop, By
 		case 0x12: // Rail type translation table; loading during both reservation and activation stage (in case it is selected depending on defined railtypes)
 			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->railtype_list, "Rail type");
 
+		case 0x16: // Road type translation table; loading during both reservation and activation stage (in case it is selected depending on defined railtypes)
+			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->roadtype_list[ROADTYPE_ROAD], "Road type");
+
+		case 0x17: // Tram type translation table; loading during both reservation and activation stage (in case it is selected depending on defined railtypes)
+			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->roadtype_list[ROADTYPE_TRAM], "Tram type");
+
 		default:
 			break;
 	}
@@ -2800,6 +2823,12 @@ static ChangeInfoResult GlobalVarReserveInfo(uint gvid, int numinfo, int prop, B
 		case 0x12: // Rail type translation table; loading during both reservation and activation stage (in case it is selected depending on defined railtypes)
 			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->railtype_list, "Rail type");
 
+		case 0x16: // Road type translation table; loading during both reservation and activation stage (in case it is selected depending on defined roadtypes)
+			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->roadtype_list[ROADTYPE_ROAD], "Road type");
+
+		case 0x17: // Tram type translation table; loading during both reservation and activation stage (in case it is selected depending on defined tramtypes)
+			return LoadTranslationTable(gvid, numinfo, buf, _cur.grffile->roadtype_list[ROADTYPE_TRAM], "Tram type");
+
 		default:
 			break;
 	}
@@ -2964,7 +2993,7 @@ static ChangeInfoResult CargoChangeInfo(uint cid, int numinfo, int prop, ByteRea
 					case 0x0B: cs->town_effect = TE_FOOD; break;
 					default:
 						grfmsg(1, "CargoChangeInfo: Unknown town growth substitute value %d, setting to none.", substitute_type);
-						/* FALL THROUGH */
+						FALLTHROUGH;
 					case 0xFF: cs->town_effect = TE_NONE; break;
 				}
 				break;
@@ -3602,11 +3631,11 @@ static ChangeInfoResult IndustriesChangeInfo(uint indid, int numinfo, int prop, 
 			case 0x1C: // Input cargo multipliers for the three input cargo types
 			case 0x1D:
 			case 0x1E: {
-					uint32 multiples = buf->ReadDWord();
-					indsp->input_cargo_multiplier[prop - 0x1C][0] = GB(multiples, 0, 16);
-					indsp->input_cargo_multiplier[prop - 0x1C][1] = GB(multiples, 16, 16);
-					break;
-				}
+				uint32 multiples = buf->ReadDWord();
+				indsp->input_cargo_multiplier[prop - 0x1C][0] = GB(multiples, 0, 16);
+				indsp->input_cargo_multiplier[prop - 0x1C][1] = GB(multiples, 16, 16);
+				break;
+			}
 
 			case 0x1F: // Industry name
 				AddStringForMapping(buf->ReadWord(), &indsp->name);
@@ -3745,7 +3774,7 @@ static ChangeInfoResult AirportChangeInfo(uint airport, int numinfo, int prop, B
 				const AirportTileTable *copy_from;
 				try {
 					for (byte j = 0; j < as->num_table; j++) {
-						as->rotation[j] = (Direction)buf->ReadByte();
+						const_cast<Direction&>(as->rotation[j]) = (Direction)buf->ReadByte();
 						for (int k = 0;; k++) {
 							att[k].ti.x = buf->ReadByte(); // Offsets from northermost tile
 							att[k].ti.y = buf->ReadByte();
@@ -4089,7 +4118,7 @@ static ChangeInfoResult RailTypeChangeInfo(uint id, int numinfo, int prop, ByteR
 					RailType rt = GetRailTypeByLabel(BSWAP32(label), false);
 					if (rt != INVALID_RAILTYPE) {
 						switch (prop) {
-							case 0x0F: SetBit(rti->powered_railtypes, rt); // Powered implies compatible.
+							case 0x0F: SetBit(rti->powered_railtypes, rt);               FALLTHROUGH; // Powered implies compatible.
 							case 0x0E: SetBit(rti->compatible_railtypes, rt);            break;
 							case 0x18: SetBit(rti->introduction_required_railtypes, rt); break;
 							case 0x19: SetBit(rti->introduces_railtypes, rt);            break;
@@ -4206,7 +4235,7 @@ static ChangeInfoResult RailTypeReserveInfo(uint id, int numinfo, int prop, Byte
 					break;
 				}
 				grfmsg(1, "RailTypeReserveInfo: Ignoring property 1D for rail type %u because no label was set", id + i);
-				/* FALL THROUGH */
+				FALLTHROUGH;
 
 			case 0x0E: // Compatible railtype list
 			case 0x0F: // Powered railtype list
@@ -4238,13 +4267,13 @@ static ChangeInfoResult RailTypeReserveInfo(uint id, int numinfo, int prop, Byte
 }
 
 /**
-* Define properties for roadtypes
-* @param id ID of the roadtype.
-* @param numinfo Number of subsequent IDs to change the property for.
-* @param prop The property to change.
-* @param buf The property value.
-* @return ChangeInfoResult.
-*/
+ * Define properties for roadtypes
+ * @param id ID of the roadtype.
+ * @param numinfo Number of subsequent IDs to change the property for.
+ * @param prop The property to change.
+ * @param buf The property value.
+ * @return ChangeInfoResult.
+ */
 static ChangeInfoResult RoadTypeChangeInfo(uint id, int numinfo, int prop, ByteReader *buf, RoadType basetype)
 {
 	ChangeInfoResult ret = CIR_SUCCESS;
@@ -4268,112 +4297,94 @@ static ChangeInfoResult RoadTypeChangeInfo(uint id, int numinfo, int prop, ByteR
 		RoadtypeInfo *rti = &_roadtypes[basetype][rtid.subtype];
 
 		switch (prop) {
-		case 0x08: // Label of road type
-				   /* Skipped here as this is loaded during reservation stage. */
-			buf->ReadDWord();
-			break;
+			case 0x08: // Label of road type
+				/* Skipped here as this is loaded during reservation stage. */
+				buf->ReadDWord();
+				break;
 
-		case 0x09: { // Toolbar caption of roadtype (sets name as well for backwards compatibility for grf ver < 8)
-			uint16 str = buf->ReadWord();
-			AddStringForMapping(str, &rti->strings.toolbar_caption);
-			if (_cur.grffile->grf_version < 8) {
-				AddStringForMapping(str, &rti->strings.name);
+			case 0x09: { // Toolbar caption of roadtype (sets name as well for backwards compatibility for grf ver < 8)
+				uint16 str = buf->ReadWord();
+				AddStringForMapping(str, &rti->strings.toolbar_caption);
+				break;
 			}
-			break;
-		}
 
-		case 0x0A: // Menu text of roadtype
-			AddStringForMapping(buf->ReadWord(), &rti->strings.menu_text);
-			break;
+			case 0x0A: // Menu text of roadtype
+				AddStringForMapping(buf->ReadWord(), &rti->strings.menu_text);
+				break;
 
-		case 0x0B: // Build window caption
-			AddStringForMapping(buf->ReadWord(), &rti->strings.build_caption);
-			break;
+			case 0x0B: // Build window caption
+				AddStringForMapping(buf->ReadWord(), &rti->strings.build_caption);
+				break;
 
-		case 0x0C: // Autoreplace text
-			AddStringForMapping(buf->ReadWord(), &rti->strings.replace_text);
-			break;
+			case 0x0C: // Autoreplace text
+				AddStringForMapping(buf->ReadWord(), &rti->strings.replace_text);
+				break;
 
-		case 0x0D: // New locomotive text
-			AddStringForMapping(buf->ReadWord(), &rti->strings.new_loco);
-			break;
+			case 0x0D: // New engine text
+				AddStringForMapping(buf->ReadWord(), &rti->strings.new_engine);
+				break;
 
-		case 0x0E: // Compatible roadtype list
-		case 0x0F: // Powered roadtype list
-		case 0x18: // Roadtype list required for date introduction
-		case 0x19: // Introduced roadtype list
-		{
-			/* Road type compatibility bits are added to the existing bits
-			* to allow multiple GRFs to modify compatibility with the
-			* default road types. */
-			int n = buf->ReadByte();
-			for (int j = 0; j != n; j++) {
-				RoadTypeLabel label = buf->ReadDWord();
-				RoadTypeIdentifier rtid = GetRoadTypeByLabel(BSWAP32(label), basetype, false);
-				if (!rtid.IsValid()) {
-					switch (prop) {
-					case 0x0F: SetBit(rti->powered_roadtypes, rtid.basetype); // Powered implies compatible.
-					case 0x0E: SetBit(rti->compatible_roadtypes, rtid.basetype);            break;
-					case 0x18: SetBit(rti->introduction_required_roadtypes, rtid.basetype); break;
-					case 0x19: SetBit(rti->introduces_roadtypes, rtid.basetype);            break;
+			case 0x0F: // Powered roadtype list
+			case 0x18: // Roadtype list required for date introduction
+			case 0x19: { // Introduced roadtype list
+				/* Road type compatibility bits are added to the existing bits
+				 * to allow multiple GRFs to modify compatibility with the
+				 * default road types. */
+				int n = buf->ReadByte();
+				for (int j = 0; j != n; j++) {
+					RoadTypeLabel label = buf->ReadDWord();
+					RoadTypeIdentifier c_rtid = GetRoadTypeByLabel(BSWAP32(label), basetype, false);
+					if (c_rtid.IsValid()) {
+						switch (prop) {
+							case 0x0F: SetBit(rti->powered_roadtypes, c_rtid.subtype);               break;
+							case 0x18: SetBit(rti->introduction_required_roadtypes, c_rtid.subtype); break;
+							case 0x19: SetBit(rti->introduces_roadtypes, c_rtid.subtype);            break;
+						}
 					}
 				}
+				break;
 			}
-			break;
-		}
 
-		case 0x10: // Road Type flags
-			rti->flags = (RoadTypeFlags)buf->ReadByte();
-			break;
+			case 0x10: // Road Type flags
+				rti->flags = (RoadTypeFlags)buf->ReadByte();
+				break;
 
-		case 0x11: // Curve speed advantage
-			rti->curve_speed = buf->ReadByte();
-			break;
+			case 0x13: // Construction cost factor
+				rti->cost_multiplier = buf->ReadWord();
+				break;
 
-		case 0x12: // Station graphic
-			rti->fallback_roadtype = Clamp(buf->ReadByte(), 0, 2);
-			break;
+			case 0x14: // Speed limit
+				rti->max_speed = buf->ReadWord();
+				break;
 
-		case 0x13: // Construction cost factor
-			rti->cost_multiplier = buf->ReadWord();
-			break;
+			case 0x16: // Map colour
+				rti->map_colour = buf->ReadByte();
+				break;
 
-		case 0x14: // Speed limit
-			rti->max_speed = buf->ReadWord();
-			break;
+			case 0x17: // Introduction date
+				rti->introduction_date = buf->ReadDWord();
+				break;
 
-		case 0x15: // Acceleration model
-			rti->acceleration_type = Clamp(buf->ReadByte(), 0, 2);
-			break;
+			case 0x1A: // Sort order
+				rti->sorting_order = buf->ReadByte();
+				break;
 
-		case 0x16: // Map colour
-			rti->map_colour = buf->ReadByte();
-			break;
+			case 0x1B: // Name of roadtype
+				AddStringForMapping(buf->ReadWord(), &rti->strings.name);
+				break;
 
-		case 0x17: // Introduction date
-			rti->introduction_date = buf->ReadDWord();
-			break;
+			case 0x1C: // Maintenance cost factor
+				rti->maintenance_multiplier = buf->ReadWord();
+				break;
 
-		case 0x1A: // Sort order
-			rti->sorting_order = buf->ReadByte();
-			break;
+			case 0x1D: // Alternate road type label list
+				/* Skipped here as this is loaded during reservation stage. */
+				for (int j = buf->ReadByte(); j != 0; j--) buf->ReadDWord();
+				break;
 
-		case 0x1B: // Name of roadtype (overridden by prop 09 for grf ver < 8)
-			AddStringForMapping(buf->ReadWord(), &rti->strings.name);
-			break;
-
-		case 0x1C: // Maintenance cost factor
-			rti->maintenance_multiplier = buf->ReadWord();
-			break;
-
-		case 0x1D: // Alternate road type label list
-				   /* Skipped here as this is loaded during reservation stage. */
-			for (int j = buf->ReadByte(); j != 0; j--) buf->ReadDWord();
-			break;
-
-		default:
-			ret = CIR_UNKNOWN;
-			break;
+			default:
+				ret = CIR_UNKNOWN;
+				break;
 		}
 	}
 
@@ -4409,8 +4420,7 @@ static ChangeInfoResult RoadTypeReserveInfo(uint id, int numinfo, int prop, Byte
 
 	for (int i = 0; i < numinfo; i++) {
 		switch (prop) {
-			case 0x08: // Label of rail type
-			{
+			case 0x08: { // Label of road type
 				RoadTypeLabel rtl = buf->ReadDWord();
 				rtl = BSWAP32(rtl);
 
@@ -4446,7 +4456,6 @@ static ChangeInfoResult RoadTypeReserveInfo(uint id, int numinfo, int prop, Byte
 				grfmsg(1, "RoadTypeReserveInfo: Ignoring property 1D for road type %u because no label was set", id + i);
 				/* FALL THROUGH */
 
-			case 0x0E: // Compatible roadtype list
 			case 0x0F: // Powered roadtype list
 			case 0x18: // Roadtype list required for date introduction
 			case 0x19: // Introduced roadtype list
@@ -4454,7 +4463,6 @@ static ChangeInfoResult RoadTypeReserveInfo(uint id, int numinfo, int prop, Byte
 				break;
 
 			case 0x10: // Road Type flags
-			case 0x11: // Curve speed advantage
 			case 0x12: // Station graphic
 			case 0x15: // Acceleration model
 			case 0x16: // Map colour
@@ -4593,7 +4601,7 @@ static bool HandleChangeInfoResult(const char *caller, ChangeInfoResult cir, uin
 
 		case CIR_UNKNOWN:
 			grfmsg(0, "%s: Unknown property 0x%02X of feature 0x%02X, disabling", caller, property, feature);
-			/* FALL THROUGH */
+			FALLTHROUGH;
 
 		case CIR_INVALID_ID: {
 			/* No debug message for an invalid ID, as it has already been output */
@@ -5772,13 +5780,12 @@ static void FeatureNewName(ByteReader *buf)
 				}
 				break;
 
-			case GSF_INDUSTRIES: {
-				AddGRFString(_cur.grffile->grfid, id, lang, new_scheme, true, name, STR_UNDEFINED);
-				break;
-			}
-
-			case GSF_HOUSES:
 			default:
+				if (IsInsideMM(id, 0xD000, 0xD400) || IsInsideMM(id, 0xD800, 0xE000)) {
+					AddGRFString(_cur.grffile->grfid, id, lang, new_scheme, true, name, STR_UNDEFINED);
+					break;
+				}
+
 				switch (GB(id, 8, 8)) {
 					case 0xC4: // Station class name
 						if (_cur.grffile->stations == NULL || _cur.grffile->stations[GB(id, 0, 8)] == NULL) {
@@ -5811,14 +5818,6 @@ static void FeatureNewName(ByteReader *buf)
 						} else {
 							_cur.grffile->housespec[GB(id, 0, 8)]->building_name = AddGRFString(_cur.grffile->grfid, id, lang, new_scheme, false, name, STR_UNDEFINED);
 						}
-						break;
-
-					case 0xD0:
-					case 0xD1:
-					case 0xD2:
-					case 0xD3:
-					case 0xDC:
-						AddGRFString(_cur.grffile->grfid, id, lang, new_scheme, true, name, STR_UNDEFINED);
 						break;
 
 					default:
@@ -5882,7 +5881,7 @@ static const Action5Type _action5_types[] = {
 	/* 0x02 */ { A5BLOCK_INVALID,      0,                            0, 0,                                           "Type 0x02"                },
 	/* 0x03 */ { A5BLOCK_INVALID,      0,                            0, 0,                                           "Type 0x03"                },
 	/* 0x04 */ { A5BLOCK_ALLOW_OFFSET, SPR_SIGNALS_BASE,             1, PRESIGNAL_SEMAPHORE_AND_PBS_SPRITE_COUNT,    "Signal graphics"          },
-	/* 0x05 */ { A5BLOCK_ALLOW_OFFSET, SPR_ELRAIL_BASE,              1, ELRAIL_SPRITE_COUNT,                         "Catenary graphics"        },
+	/* 0x05 */ { A5BLOCK_ALLOW_OFFSET, SPR_ELRAIL_BASE,              1, ELRAIL_SPRITE_COUNT,                         "Rail catenary graphics"   },
 	/* 0x06 */ { A5BLOCK_ALLOW_OFFSET, SPR_SLOPES_BASE,              1, NORMAL_AND_HALFTILE_FOUNDATION_SPRITE_COUNT, "Foundation graphics"      },
 	/* 0x07 */ { A5BLOCK_INVALID,      0,                           75, 0,                                           "TTDP GUI graphics"        }, // Not used by OTTD.
 	/* 0x08 */ { A5BLOCK_ALLOW_OFFSET, SPR_CANALS_BASE,              1, CANALS_SPRITE_COUNT,                         "Canal graphics"           },
@@ -5919,7 +5918,7 @@ static void GraphicsNew(ByteReader *buf)
 	uint16 offset = HasBit(type, 7) ? buf->ReadExtendedByte() : 0;
 	ClrBit(type, 7); // Clear the high bit as that only indicates whether there is an offset.
 
-	if ((type == 0x0D) && (num == 10) && _cur.grffile->is_ottdfile) {
+	if ((type == 0x0D) && (num == 10) && HasBit(_cur.grfconfig->flags, GCF_SYSTEM)) {
 		/* Special not-TTDP-compatible case used in openttd.grf
 		 * Missing shore sprites and initialisation of SPR_SHORE_BASE */
 		grfmsg(2, "GraphicsNew: Loading 10 missing shore sprites from extra grf.");
@@ -5969,12 +5968,19 @@ static void GraphicsNew(ByteReader *buf)
 	/* Load <num> sprites starting from <replace>, then skip <skip_num> sprites. */
 	grfmsg(2, "GraphicsNew: Replacing sprites %d to %d of %s (type 0x%02X) at SpriteID 0x%04X", offset, offset + num - 1, action5_type->name, type, replace);
 
+	if (type == 0x0D) _loaded_newgrf_features.shore = SHORE_REPLACE_ACTION_5;
+
+	if (type == 0x0B) {
+		static const SpriteID depot_with_track_offset = SPR_TRAMWAY_DEPOT_WITH_TRACK - SPR_TRAMWAY_BASE;
+		static const SpriteID depot_no_track_offset = SPR_TRAMWAY_DEPOT_NO_TRACK - SPR_TRAMWAY_BASE;
+		if (offset <= depot_with_track_offset && offset + num > depot_with_track_offset) _loaded_newgrf_features.tram = TRAMWAY_REPLACE_DEPOT_WITH_TRACK;
+		if (offset <= depot_no_track_offset && offset + num > depot_no_track_offset) _loaded_newgrf_features.tram = TRAMWAY_REPLACE_DEPOT_NO_TRACK;
+	}
+
 	for (; num > 0; num--) {
 		_cur.nfo_line++;
 		LoadNextSprite(replace == 0 ? _cur.spriteid++ : replace++, _cur.file_index, _cur.nfo_line, _cur.grf_container_ver);
 	}
-
-	if (type == 0x0D) _loaded_newgrf_features.shore = SHORE_REPLACE_ACTION_5;
 
 	_cur.skip_sprites = skip_num;
 }
@@ -5989,35 +5995,6 @@ static void SkipAct5(ByteReader *buf)
 	_cur.skip_sprites = buf->ReadExtendedByte();
 
 	grfmsg(3, "SkipAct5: Skipping %d sprites", _cur.skip_sprites);
-}
-
-/**
- * Check whether we are (obviously) missing some of the extra
- * (Action 0x05) sprites that we like to use.
- * When missing sprites are found a warning will be shown.
- */
-void CheckForMissingSprites()
-{
-	/* Don't break out quickly, but allow to check the other
-	 * sprites as well, so we can give the best information. */
-	bool missing = false;
-	for (uint8 i = 0; i < lengthof(_action5_types); i++) {
-		const Action5Type *type = &_action5_types[i];
-		if (type->block_type == A5BLOCK_INVALID) continue;
-
-		for (uint j = 0; j < type->max_sprites; j++) {
-			if (!SpriteExists(type->sprite_base + j)) {
-				DEBUG(grf, 0, "%s sprites are missing", type->name);
-				missing = true;
-				/* No need to log more of the same. */
-				break;
-			}
-		}
-	}
-
-	if (missing) {
-		ShowErrorMessage(IsReleasedVersion() ? STR_NEWGRF_ERROR_MISSING_SPRITES : STR_NEWGRF_ERROR_MISSING_SPRITES_UNSTABLE, INVALID_STRING_ID, WL_CRITICAL);
-	}
 }
 
 /**
@@ -6430,6 +6407,14 @@ static void SkipIf(ByteReader *buf)
 				break;
 			case 0x0E: result = GetRailTypeByLabel(BSWAP32(cond_val)) != INVALID_RAILTYPE;
 				break;
+			case 0x0F: result = !GetRoadTypeByLabel(BSWAP32(cond_val), ROADTYPE_ROAD).IsValid();
+				break;
+			case 0x10: result = GetRoadTypeByLabel(BSWAP32(cond_val), ROADTYPE_ROAD).IsValid();
+				break;
+			case 0x11: result = !GetRoadTypeByLabel(BSWAP32(cond_val), ROADTYPE_TRAM).IsValid();
+				break;
+			case 0x12: result = GetRoadTypeByLabel(BSWAP32(cond_val), ROADTYPE_TRAM).IsValid();
+				break;
 
 			default: grfmsg(1, "SkipIf: Unsupported condition type %02X. Ignoring", condtype); return;
 		}
@@ -6497,7 +6482,7 @@ static void ScanInfo(ByteReader *buf)
 	}
 
 	/* GRF IDs starting with 0xFF are reserved for internal TTDPatch use */
-	if (GB(grfid, 24, 8) == 0xFF) SetBit(_cur.grfconfig->flags, GCF_SYSTEM);
+	if (GB(grfid, 0, 8) == 0xFF) SetBit(_cur.grfconfig->flags, GCF_SYSTEM);
 
 	AddGRFTextToList(&_cur.grfconfig->name->text, 0x7F, grfid, false, name);
 
@@ -7571,7 +7556,7 @@ static void TranslateGRFStrings(ByteReader *buf)
 	byte num_strings = buf->ReadByte();
 	uint16 first_id  = buf->ReadWord();
 
-	if (!((first_id >= 0xD000 && first_id + num_strings <= 0xD3FF) || (first_id >= 0xDC00 && first_id + num_strings <= 0xDCFF))) {
+	if (!((first_id >= 0xD000 && first_id + num_strings <= 0xD400) || (first_id >= 0xD800 && first_id + num_strings <= 0xE000))) {
 		grfmsg(7, "TranslateGRFStrings: Attempting to set out-of-range string IDs in action 13 (first: 0x%4X, number: 0x%2X)", first_id, num_strings);
 		return;
 	}
@@ -8246,6 +8231,7 @@ static void ResetCustomAirports()
 					}
 					free(as->table);
 					free(as->depot_table);
+					free(as->rotation);
 
 					free(as);
 				}
@@ -8432,6 +8418,7 @@ void ResetNewGRFData()
 	_loaded_newgrf_features.has_newhouses     = false;
 	_loaded_newgrf_features.has_newindustries = false;
 	_loaded_newgrf_features.shore             = SHORE_REPLACE_NONE;
+	_loaded_newgrf_features.tram              = TRAMWAY_REPLACE_DEPOT_NONE;
 
 	/* Clear all GRF overrides */
 	_grf_id_overrides.clear();
@@ -8518,6 +8505,13 @@ GRFFile::GRFFile(const GRFConfig *config)
 	this->railtype_map[1] = RAILTYPE_ELECTRIC;
 	this->railtype_map[2] = RAILTYPE_MONO;
 	this->railtype_map[3] = RAILTYPE_MAGLEV;
+
+	/* Initialise road type map with default road types */
+	memset(this->roadtype_map, INVALID_ROADSUBTYPE, sizeof(this->roadtype_map));
+	this->roadtype_map[ROADTYPE_ROAD][0] = ROADSUBTYPE_NORMAL;
+	this->roadtype_map[ROADTYPE_ROAD][1] = ROADSUBTYPE_ELECTRIC;
+	this->roadtype_map[ROADTYPE_TRAM][0] = ROADSUBTYPE_NORMAL;
+	this->roadtype_map[ROADTYPE_TRAM][1] = ROADSUBTYPE_ELECTRIC;
 
 	/* Copy the initial parameter list
 	 * 'Uninitialised' parameters are zeroed as that is their default value when dynamically creating them. */
@@ -9158,11 +9152,10 @@ void LoadNewGRFFile(GRFConfig *config, uint file_index, GrfLoadingStage stage, S
 		if (_cur.grffile == NULL) usererror("File '%s' lost in cache.\n", filename);
 		if (stage == GLS_RESERVE && config->status != GCS_INITIALISED) return;
 		if (stage == GLS_ACTIVATION && !HasBit(config->flags, GCF_RESERVED)) return;
-		_cur.grffile->is_ottdfile = config->IsOpenTTDBaseGRF();
 	}
 
-	if (file_index > LAST_GRF_SLOT) {
-		DEBUG(grf, 0, "'%s' is not loaded as the maximum number of GRFs has been reached", filename);
+	if (file_index >= MAX_FILE_SLOTS) {
+		DEBUG(grf, 0, "'%s' is not loaded as the maximum number of file slots has been reached", filename);
 		config->status = GCS_DISABLED;
 		config->error  = new GRFError(STR_NEWGRF_ERROR_MSG_FATAL, STR_NEWGRF_ERROR_TOO_MANY_NEWGRFS_LOADED);
 		return;
@@ -9288,6 +9281,21 @@ static void ActivateOldShore()
 		 *       If they would be used somewhen, then these grass tiles will most like not look as needed */
 		DupSprite(SPR_FLAT_GRASS_TILE +  5, SPR_SHORE_BASE + 16); // SLOPE_EW
 		DupSprite(SPR_FLAT_GRASS_TILE + 10, SPR_SHORE_BASE + 17); // SLOPE_NS
+	}
+}
+
+/**
+ * Replocate the old tram depot sprites to the new position, if no new ones were loaded.
+ */
+static void ActivateOldTramDepot()
+{
+	if (_loaded_newgrf_features.tram == TRAMWAY_REPLACE_DEPOT_WITH_TRACK) {
+		DupSprite(SPR_ROAD_DEPOT               + 0, SPR_TRAMWAY_DEPOT_NO_TRACK + 0); // use road depot graphics for "no tracks"
+		DupSprite(SPR_TRAMWAY_DEPOT_WITH_TRACK + 1, SPR_TRAMWAY_DEPOT_NO_TRACK + 1);
+		DupSprite(SPR_ROAD_DEPOT               + 2, SPR_TRAMWAY_DEPOT_NO_TRACK + 2); // use road depot graphics for "no tracks"
+		DupSprite(SPR_TRAMWAY_DEPOT_WITH_TRACK + 3, SPR_TRAMWAY_DEPOT_NO_TRACK + 3);
+		DupSprite(SPR_TRAMWAY_DEPOT_WITH_TRACK + 4, SPR_TRAMWAY_DEPOT_NO_TRACK + 4);
+		DupSprite(SPR_TRAMWAY_DEPOT_WITH_TRACK + 5, SPR_TRAMWAY_DEPOT_NO_TRACK + 5);
 	}
 }
 
@@ -9470,12 +9478,29 @@ static void AfterLoadGRFs()
 	/* Load old shore sprites in new position, if they were replaced by ActionA */
 	ActivateOldShore();
 
+	/* Load old tram depot sprites in new position, if no new ones are present */
+	ActivateOldTramDepot();
+
 	/* Set up custom rail types */
 	InitRailTypes();
 	InitRoadTypes();
 
 	Engine *e;
 	FOR_ALL_ENGINES_OF_TYPE(e, VEH_ROAD) {
+		RoadType rt = HasBit(e->info.misc_flags, EF_ROAD_TRAM) ? ROADTYPE_TRAM : ROADTYPE_ROAD;
+		const GRFFile *file = e->GetGRF();
+		if (file != NULL && _gted[e->index].roadsubtype < file->roadtype_list[rt].Length()) {
+			RoadTypeIdentifier rtid = GetRoadTypeByLabel(file->roadtype_list[rt][_gted[e->index].roadsubtype], rt, true);
+			if (rtid.IsValid()) {
+				e->u.road.roadsubtype = rtid.subtype;
+			} else {
+				/* Road type is not available, so disable this engine */
+				e->info.climates = 0;
+			}
+		} else {
+			e->u.road.roadsubtype = rt == ROADTYPE_TRAM ? ROADSUBTYPE_ELECTRIC : ROADSUBTYPE_NORMAL;
+		}
+
 		if (_gted[e->index].rv_max_speed != 0) {
 			/* Set RV maximum speed from the mph/0.8 unit value */
 			e->u.road.max_speed = _gted[e->index].rv_max_speed * 4;
@@ -9505,8 +9530,9 @@ static void AfterLoadGRFs()
  * Load all the NewGRFs.
  * @param load_index The offset for the first sprite to add.
  * @param file_index The Fio index of the first NewGRF to load.
+ * @param num_baseset Number of NewGRFs at the front of the list to look up in the baseset dir instead of the newgrf dir.
  */
-void LoadNewGRF(uint load_index, uint file_index)
+void LoadNewGRF(uint load_index, uint file_index, uint num_baseset)
 {
 	/* In case of networking we need to "sync" the start values
 	 * so all NewGRFs are loaded equally. For this we use the
@@ -9565,13 +9591,14 @@ void LoadNewGRF(uint load_index, uint file_index)
 		}
 
 		uint slot = file_index;
+		uint num_non_static = 0;
 
 		_cur.stage = stage;
 		for (GRFConfig *c = _grfconfig; c != NULL; c = c->next) {
 			if (c->status == GCS_DISABLED || c->status == GCS_NOT_FOUND) continue;
 			if (stage > GLS_INIT && HasBit(c->flags, GCF_INIT_ONLY)) continue;
 
-			Subdirectory subdir = slot == file_index ? BASESET_DIR : NEWGRF_DIR;
+			Subdirectory subdir = slot < file_index + num_baseset ? BASESET_DIR : NEWGRF_DIR;
 			if (!FioCheckFileExists(c->filename, subdir)) {
 				DEBUG(grf, 0, "NewGRF file is missing '%s'; disabling", c->filename);
 				c->status = GCS_NOT_FOUND;
@@ -9579,6 +9606,16 @@ void LoadNewGRF(uint load_index, uint file_index)
 			}
 
 			if (stage == GLS_LABELSCAN) InitNewGRFFile(c);
+
+			if (!HasBit(c->flags, GCF_STATIC) && !HasBit(c->flags, GCF_SYSTEM)) {
+				if (num_non_static == NETWORK_MAX_GRF_COUNT) {
+					DEBUG(grf, 0, "'%s' is not loaded as the maximum number of non-static GRFs has been reached", c->filename);
+					c->status = GCS_DISABLED;
+					c->error  = new GRFError(STR_NEWGRF_ERROR_MSG_FATAL, STR_NEWGRF_ERROR_TOO_MANY_NEWGRFS_LOADED);
+					continue;
+				}
+				num_non_static++;
+			}
 			LoadNewGRFFile(c, slot++, stage, subdir);
 			if (stage == GLS_RESERVE) {
 				SetBit(c->flags, GCF_RESERVED);

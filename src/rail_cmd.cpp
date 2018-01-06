@@ -47,8 +47,6 @@ RailtypeInfo _railtypes[RAILTYPE_END];
 RailType _sorted_railtypes[RAILTYPE_END];
 uint8 _sorted_railtypes_size;
 
-assert_compile(sizeof(_original_railtypes) <= sizeof(_railtypes));
-
 /** Enum holding the signal offset in the sprite sheet according to the side it is representing. */
 enum SignalOffsets {
 	SIGNAL_TO_SOUTHWEST,
@@ -66,8 +64,20 @@ enum SignalOffsets {
  */
 void ResetRailTypes()
 {
-	memset(_railtypes, 0, sizeof(_railtypes));
-	memcpy(_railtypes, _original_railtypes, sizeof(_original_railtypes));
+	assert_compile(lengthof(_original_railtypes) <= lengthof(_railtypes));
+
+	uint i = 0;
+	for (; i < lengthof(_original_railtypes); i++) _railtypes[i] = _original_railtypes[i];
+
+	static const RailtypeInfo empty_railtype = {
+		{0,0,0,0,0,0,0,0,0,0,0,0},
+		{0,0,0,0,0,0,0,0,{}},
+		{0,0,0,0,0,0,0,0},
+		{0,0,0,0,0,0},
+		0, RAILTYPES_NONE, RAILTYPES_NONE, 0, 0, 0, RTFB_NONE, 0, 0, 0, 0, 0,
+		RailTypeLabelList(), 0, 0, RAILTYPES_NONE, RAILTYPES_NONE, 0,
+		{}, {} };
+	for (; i < lengthof(_railtypes);          i++) _railtypes[i] = empty_railtype;
 }
 
 void ResolveRailTypeGUISprites(RailtypeInfo *rti)
@@ -151,11 +161,9 @@ RailType AllocateRailType(RailTypeLabel label)
 
 		if (rti->label == 0) {
 			/* Set up new rail type */
-			memcpy(rti, &_railtypes[RAILTYPE_RAIL], sizeof(*rti));
+			*rti = _original_railtypes[RAILTYPE_RAIL];
 			rti->label = label;
-			/* Clear alternate label list. Can't use Reset() here as that would free
-			 * the data pointer of RAILTYPE_RAIL and not our new rail type. */
-			new (&rti->alternate_labels) RailTypeLabelList;
+			rti->alternate_labels.Clear();
 
 			/* Make us compatible with ourself. */
 			rti->powered_railtypes    = (RailTypes)(1 << rt);
@@ -447,7 +455,7 @@ CommandCost CmdBuildSingleRail(TileIndex tile, DoCommandFlag flags, uint32 p1, u
 			CommandCost ret = CheckTileOwnership(tile);
 			if (ret.Failed()) return ret;
 
-			if (!IsPlainRail(tile)) return CMD_ERROR;
+			if (!IsPlainRail(tile)) return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR); // just get appropriate error message
 
 			if (!IsCompatibleRail(GetRailType(tile), railtype)) return_cmd_error(STR_ERROR_IMPOSSIBLE_TRACK_COMBINATION);
 
@@ -501,9 +509,15 @@ CommandCost CmdBuildSingleRail(TileIndex tile, DoCommandFlag flags, uint32 p1, u
 
 				if (GetDisallowedRoadDirections(tile) != DRD_NONE) return_cmd_error(STR_ERROR_CROSSING_ON_ONEWAY_ROAD);
 
-				if (RailNoLevelCrossings(railtype)) return_cmd_error(STR_ERROR_CROSSING_DISALLOWED);
+				if (RailNoLevelCrossings(railtype)) return_cmd_error(STR_ERROR_CROSSING_DISALLOWED_RAIL);
 
-				RoadTypes roadtypes = GetRoadTypes(tile);
+				RoadTypeIdentifier rtid;
+				RoadTypeIdentifiers rtids = RoadTypeIdentifiers::FromTile(tile);
+
+				FOR_EACH_SET_ROADTYPEIDENTIFIER(rtid, rtids) {
+					if (RoadNoLevelCrossing(rtid)) return_cmd_error(STR_ERROR_CROSSING_DISALLOWED_ROAD);
+				}
+
 				RoadBits road = GetRoadBits(tile, ROADTYPE_ROAD);
 				RoadBits tram = GetRoadBits(tile, ROADTYPE_TRAM);
 				if ((track == TRACK_X && ((road | tram) & ROAD_X) == 0) ||
@@ -516,26 +530,28 @@ CommandCost CmdBuildSingleRail(TileIndex tile, DoCommandFlag flags, uint32 p1, u
 						CommandCost ret = CheckOwnership(tram_owner);
 						if (ret.Failed()) return ret;
 					}
-					/* Crossings must always have a road... */
-					uint num_new_road_pieces = 2 - CountBits(road);
-					if (road == ROAD_NONE) road_owner = _current_company;
-					roadtypes |= ROADTYPES_ROAD;
-					/* ...but tram is not required. */
-					uint num_new_tram_pieces = (tram != ROAD_NONE) ? 2 - CountBits(tram) : 0;
 
-					cost.AddCost((num_new_road_pieces + num_new_tram_pieces) * _price[PR_BUILD_ROAD]);
+					uint num_new_road_pieces = (road != ROAD_NONE) ? 2 - CountBits(road) : 0;
+					if (num_new_road_pieces > 0) {
+						cost.AddCost(num_new_road_pieces * RoadBuildCost(rtids.road_identifier));
+					}
+
+					uint num_new_tram_pieces = (tram != ROAD_NONE) ? 2 - CountBits(tram) : 0;
+					if (num_new_tram_pieces > 0) {
+						cost.AddCost(num_new_tram_pieces * RoadBuildCost(rtids.tram_identifier));
+					}
 
 					if (flags & DC_EXEC) {
-						MakeRoadCrossing(tile, road_owner, tram_owner, _current_company, (track == TRACK_X ? AXIS_Y : AXIS_X), railtype, roadtypes, GetTownIndex(tile));
+						MakeRoadCrossing(tile, road_owner, tram_owner, _current_company, (track == TRACK_X ? AXIS_Y : AXIS_X), railtype, rtids, GetTownIndex(tile));
 						UpdateLevelCrossing(tile, false);
 						Company::Get(_current_company)->infrastructure.rail[railtype] += LEVELCROSSING_TRACKBIT_FACTOR;
 						DirtyCompanyInfrastructureWindows(_current_company);
 						if (num_new_road_pieces > 0 && Company::IsValidID(road_owner)) {
-							Company::Get(road_owner)->infrastructure.road[ROADTYPE_ROAD] += num_new_road_pieces;
+							Company::Get(road_owner)->infrastructure.road[ROADTYPE_ROAD][rtids.road_identifier.subtype] += num_new_road_pieces;
 							DirtyCompanyInfrastructureWindows(road_owner);
 						}
 						if (num_new_tram_pieces > 0 && Company::IsValidID(tram_owner)) {
-							Company::Get(tram_owner)->infrastructure.road[ROADTYPE_TRAM] += num_new_tram_pieces;
+							Company::Get(tram_owner)->infrastructure.road[ROADTYPE_TRAM][rtids.tram_identifier.subtype] += num_new_tram_pieces;
 							DirtyCompanyInfrastructureWindows(tram_owner);
 						}
 					}
@@ -546,8 +562,8 @@ CommandCost CmdBuildSingleRail(TileIndex tile, DoCommandFlag flags, uint32 p1, u
 			if (IsLevelCrossing(tile) && GetCrossingRailBits(tile) == trackbit) {
 				return_cmd_error(STR_ERROR_ALREADY_BUILT);
 			}
-			/* FALL THROUGH */
 		}
+		FALLTHROUGH;
 
 		default: {
 			/* Will there be flat water on the lower halftile? */
@@ -636,7 +652,7 @@ CommandCost CmdRemoveSingleRail(TileIndex tile, DoCommandFlag flags, uint32 p1, 
 				owner = GetTileOwner(tile);
 				Company::Get(owner)->infrastructure.rail[GetRailType(tile)] -= LEVELCROSSING_TRACKBIT_FACTOR;
 				DirtyCompanyInfrastructureWindows(owner);
-				MakeRoadNormal(tile, GetCrossingRoadBits(tile), GetRoadTypes(tile), GetTownIndex(tile), GetRoadOwner(tile, ROADTYPE_ROAD), GetRoadOwner(tile, ROADTYPE_TRAM), HasCatenary(tile));
+				MakeRoadNormal(tile, GetCrossingRoadBits(tile), RoadTypeIdentifiers::FromTile(tile), GetTownIndex(tile), GetRoadOwner(tile, ROADTYPE_ROAD), GetRoadOwner(tile, ROADTYPE_TRAM));
 				DeleteNewGRFInspectWindow(GSF_RAILTYPES, tile);
 			}
 			break;
@@ -1566,7 +1582,7 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 			case MP_ROAD:
 				if (!IsLevelCrossing(tile)) continue;
 				if (RailNoLevelCrossings(totype)) {
-					error.MakeError(STR_ERROR_CROSSING_DISALLOWED);
+					error.MakeError(STR_ERROR_CROSSING_DISALLOWED_RAIL);
 					continue;
 				}
 				break;
@@ -1595,7 +1611,7 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 		 * Tunnels and bridges have special check later */
 		if (tt != MP_TUNNELBRIDGE) {
 			if (!IsCompatibleRail(type, totype)) {
-				CommandCost ret = EnsureNoVehicleOnGround(tile);
+				CommandCost ret = IsPlainRailTile(tile) ? EnsureNoTrainOnTrackBits(tile, GetTrackBits(tile)) : EnsureNoVehicleOnGround(tile);
 				if (ret.Failed()) {
 					error = ret;
 					continue;
@@ -2394,7 +2410,7 @@ static void DrawTile_Track(TileInfo *ti)
 
 		if (HasBit(_display_opt, DO_FULL_DETAIL)) DrawTrackDetails(ti, rti);
 
-		if (HasCatenaryDrawn(GetRailType(ti->tile))) DrawCatenary(ti);
+		if (HasRailCatenaryDrawn(GetRailType(ti->tile))) DrawRailCatenary(ti);
 
 		if (HasSignals(ti->tile)) DrawSignals(ti->tile, rails, rti);
 	} else {
@@ -2436,40 +2452,67 @@ static void DrawTile_Track(TileInfo *ti)
 			SpriteID ground = GetCustomRailSprite(rti, ti->tile, RTSG_GROUND);
 
 			switch (GetRailDepotDirection(ti->tile)) {
-				case DIAGDIR_NE: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-				case DIAGDIR_SW: DrawGroundSprite(ground + RTO_X, PAL_NONE); break;
-				case DIAGDIR_NW: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-				case DIAGDIR_SE: DrawGroundSprite(ground + RTO_Y, PAL_NONE); break;
-				default: break;
+				case DIAGDIR_NE:
+					if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+					FALLTHROUGH;
+				case DIAGDIR_SW:
+					DrawGroundSprite(ground + RTO_X, PAL_NONE);
+					break;
+				case DIAGDIR_NW:
+					if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+					FALLTHROUGH;
+				case DIAGDIR_SE:
+					DrawGroundSprite(ground + RTO_Y, PAL_NONE);
+					break;
+				default:
+					break;
 			}
 
 			if (_settings_client.gui.show_track_reservation && HasDepotReservation(ti->tile)) {
 				SpriteID overlay = GetCustomRailSprite(rti, ti->tile, RTSG_OVERLAY);
 
 				switch (GetRailDepotDirection(ti->tile)) {
-					case DIAGDIR_NE: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-					case DIAGDIR_SW: DrawGroundSprite(overlay + RTO_X, PALETTE_CRASH); break;
-					case DIAGDIR_NW: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-					case DIAGDIR_SE: DrawGroundSprite(overlay + RTO_Y, PALETTE_CRASH); break;
-					default: break;
+					case DIAGDIR_NE:
+						if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+						FALLTHROUGH;
+					case DIAGDIR_SW:
+						DrawGroundSprite(overlay + RTO_X, PALETTE_CRASH);
+						break;
+					case DIAGDIR_NW:
+						if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+						FALLTHROUGH;
+					case DIAGDIR_SE:
+						DrawGroundSprite(overlay + RTO_Y, PALETTE_CRASH);
+						break;
+					default:
+						break;
 				}
 			}
 		} else {
 			/* PBS debugging, draw reserved tracks darker */
 			if (_game_mode != GM_MENU && _settings_client.gui.show_track_reservation && HasDepotReservation(ti->tile)) {
 				switch (GetRailDepotDirection(ti->tile)) {
-					case DIAGDIR_NE: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-					case DIAGDIR_SW: DrawGroundSprite(rti->base_sprites.single_x, PALETTE_CRASH); break;
-					case DIAGDIR_NW: if (!IsInvisibilitySet(TO_BUILDINGS)) break; // else FALL THROUGH
-					case DIAGDIR_SE: DrawGroundSprite(rti->base_sprites.single_y, PALETTE_CRASH); break;
-					default: break;
+					case DIAGDIR_NE:
+						if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+						FALLTHROUGH;
+					case DIAGDIR_SW:
+						DrawGroundSprite(rti->base_sprites.single_x, PALETTE_CRASH);
+						break;
+					case DIAGDIR_NW:
+						if (!IsInvisibilitySet(TO_BUILDINGS)) break;
+						FALLTHROUGH;
+					case DIAGDIR_SE:
+						DrawGroundSprite(rti->base_sprites.single_y, PALETTE_CRASH);
+						break;
+					default:
+						break;
 				}
 			}
 		}
 		int depot_sprite = GetCustomRailSprite(rti, ti->tile, RTSG_DEPOT);
 		relocation = depot_sprite != 0 ? depot_sprite - SPR_RAIL_DEPOT_SE_1 : rti->GetRailtypeSpriteOffset();
 
-		if (HasCatenaryDrawn(GetRailType(ti->tile))) DrawCatenary(ti);
+		if (HasRailCatenaryDrawn(GetRailType(ti->tile))) DrawRailCatenary(ti);
 
 		DrawRailTileSeq(ti, dts, TO_BUILDINGS, relocation, 0, _drawtile_track_palette);
 	}
@@ -2720,8 +2763,8 @@ static void GetTileDesc_Track(TileIndex tile, TileDesc *td)
 {
 	const RailtypeInfo *rti = GetRailTypeInfo(GetRailType(tile));
 	td->rail_speed = rti->max_speed;
+	td->railtype = rti->strings.name;
 	td->owner[0] = GetTileOwner(tile);
-	SetDParamX(td->dparam, 0, rti->strings.name);
 	switch (GetRailTileType(tile)) {
 		case RAIL_TILE_NORMAL:
 			td->str = STR_LAI_RAIL_DESCRIPTION_TRACK;
